@@ -7,7 +7,20 @@
 
 import { ProviderError } from './errors.js';
 
-const API_BASE = 'https://gitlab.com/api/v4';
+// Base GitLab host, resolved at CALL TIME from GITLAB_BASE_URL so a single env
+// var switches every host/API/OAuth/clone URL between gitlab.com (the default
+// when unset, so behavior is unchanged) and a self-hosted instance. Read on
+// each call (never captured in a module-load const), matching the call-time
+// env pattern used elsewhere (git-token.js reads GITLAB_REDIRECT_URI per call).
+// A trailing slash is stripped so `${base}/api/v4` never double-slashes.
+const gitlabBaseUrl = () =>
+  (process.env.GITLAB_BASE_URL || 'https://gitlab.com').replace(/\/+$/, '');
+
+// GitLab REST v4 base, derived from gitlabBaseUrl() at call time.
+const apiBase = () => `${gitlabBaseUrl()}/api/v4`;
+
+// The git host (e.g. gitlab.com or git.yoreland.online), derived at call time.
+const getGitHost = () => new URL(gitlabBaseUrl()).host;
 
 // ---------------------------------------------------------------------------
 // Identity / git plumbing
@@ -15,12 +28,11 @@ const API_BASE = 'https://gitlab.com/api/v4';
 
 const id = 'gitlab';
 const displayName = 'GitLab';
-const gitHost = 'gitlab.com';
 
 // GitLab clone URLs authenticate with the oauth2:<token> scheme.
 const buildCloneUrl = (repoId, token) => {
   const auth = token ? `oauth2:${token}@` : '';
-  return `https://${auth}${gitHost}/${repoId}.git`;
+  return `https://${auth}${getGitHost()}/${repoId}.git`;
 };
 
 // GitLab addresses projects by URL-encoded "group/project" path.
@@ -78,7 +90,7 @@ const oauth = {
   requiredConnectionScopes: ['api', 'read_user'],
 
   buildAuthorizeUrl({ clientId, redirectUri, state }) {
-    return `https://gitlab.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
+    return `${gitlabBaseUrl()}/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
       redirectUri,
     )}&response_type=code&scope=${encodeURIComponent(oauth.scopes)}&state=${encodeURIComponent(
       state,
@@ -86,7 +98,7 @@ const oauth = {
   },
 
   async exchangeCode({ clientId, clientSecret, code, redirectUri, fetchImpl = fetch }) {
-    const res = await fetchImpl('https://gitlab.com/oauth/token', {
+    const res = await fetchImpl(`${gitlabBaseUrl()}/oauth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -123,7 +135,7 @@ const oauth = {
     redirectUri,
     fetchImpl = fetch,
   }) {
-    const res = await fetchImpl('https://gitlab.com/oauth/token', {
+    const res = await fetchImpl(`${gitlabBaseUrl()}/oauth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -156,7 +168,7 @@ const oauth = {
 };
 
 const getAuthenticatedUser = async (ctx) => {
-  const res = await glFetch(ctx, `${API_BASE}/user`);
+  const res = await glFetch(ctx, `${apiBase()}/user`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data?.username) {
     throw new ProviderError(res.status || 400, data?.message || 'Failed to fetch user');
@@ -186,7 +198,7 @@ const mapRepo = (r) => ({
 const listRepos = async (ctx) => {
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects?membership=true&min_access_level=30&per_page=100&order_by=last_activity_at`,
+    `${apiBase()}/projects?membership=true&min_access_level=30&per_page=100&order_by=last_activity_at`,
   );
   const repos = await res.json();
   if (!Array.isArray(repos)) {
@@ -199,7 +211,7 @@ const listBranches = async (ctx, repoId) => {
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/branches?per_page=100`,
+    `${apiBase()}/projects/${project}/repository/branches?per_page=100`,
   );
   if (res.status === 404) return [];
   const data = await res.json();
@@ -219,7 +231,7 @@ const listBranches = async (ctx, repoId) => {
 // MR targeting `main` then fails. Returns null if the project can't be read.
 const getDefaultBranch = async (ctx, repoId) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}`);
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}`);
   if (!res.ok) return null;
   const data = await res.json();
   return data?.default_branch ?? null;
@@ -227,7 +239,7 @@ const getDefaultBranch = async (ctx, repoId) => {
 
 const getRepositoryAccess = async (ctx, repoId) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}`);
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ProviderError(
@@ -251,7 +263,7 @@ const getTree = async (ctx, repoId, branch = 'main') => {
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/tree?ref=${encodeURIComponent(
+    `${apiBase()}/projects/${project}/repository/tree?ref=${encodeURIComponent(
       branch,
     )}&recursive=true&per_page=100`,
   );
@@ -269,7 +281,7 @@ const getFileContents = async (ctx, repoId, filePath, branch = 'main') => {
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/files/${encodeURIComponent(
+    `${apiBase()}/projects/${project}/repository/files/${encodeURIComponent(
       filePath,
     )}?ref=${encodeURIComponent(branch)}`,
   );
@@ -341,7 +353,7 @@ const listIssues = async (ctx, repoId, options = {}) => {
   if (state !== 'all') params.set('state', state === 'open' ? 'opened' : 'closed');
   const query = String(options.q || '').trim();
   if (query) params.set('search', query);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/issues?${params.toString()}`);
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/issues?${params.toString()}`);
   if (res.status === 404) {
     return { items: [], page, perPage, hasNext: false, hasPrev: false, totalCount: null };
   }
@@ -364,7 +376,7 @@ const listIssues = async (ctx, repoId, options = {}) => {
 
 const getIssue = async (ctx, repoId, issueNumber) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/issues/${issueNumber}`);
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/issues/${issueNumber}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ProviderError(res.status, data?.message || 'Failed to fetch issue');
@@ -376,7 +388,7 @@ const listIssueComments = async (ctx, repoId, issueNumber) => {
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/issues/${issueNumber}/notes?per_page=100&sort=asc`,
+    `${apiBase()}/projects/${project}/issues/${issueNumber}/notes?per_page=100&sort=asc`,
   );
   if (res.status === 404) return [];
   const data = await res.json().catch(() => ({}));
@@ -390,7 +402,7 @@ const listIssueComments = async (ctx, repoId, issueNumber) => {
 
 const addIssueComment = async (ctx, repoId, issueNumber, body) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/issues/${issueNumber}/notes`, {
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/issues/${issueNumber}/notes`, {
     method: 'POST',
     body: JSON.stringify({ body }),
   });
@@ -403,7 +415,7 @@ const addIssueComment = async (ctx, repoId, issueNumber, body) => {
 
 const closeIssue = async (ctx, repoId, issueNumber) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/issues/${issueNumber}`, {
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/issues/${issueNumber}`, {
     method: 'PUT',
     body: JSON.stringify({ state_event: 'close' }),
   });
@@ -451,8 +463,8 @@ const listPaginated = async (ctx, url) => {
 const listPRComments = async (ctx, repoId, mrIid) => {
   const project = encodeProject(repoId);
   const [notes, discussions] = await Promise.all([
-    listPaginated(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}/notes`),
-    listPaginated(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}/discussions`),
+    listPaginated(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}/notes`),
+    listPaginated(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}/discussions`),
   ]);
 
   const inlineComments = [];
@@ -490,7 +502,7 @@ const addPRComment = async (ctx, repoId, mrIid, { body, path, line }) => {
   const project = encodeProject(repoId);
   let result;
   if (path && line) {
-    const mrRes = await glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}`);
+    const mrRes = await glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}`);
     const mrData = await mrRes.json();
     const headSha = mrData.diff_refs?.head_sha;
     const baseSha = mrData.diff_refs?.base_sha;
@@ -498,7 +510,7 @@ const addPRComment = async (ctx, repoId, mrIid, { body, path, line }) => {
     if (!headSha) throw new ProviderError(400, 'Could not determine commit SHA');
     const discussionRes = await glFetch(
       ctx,
-      `${API_BASE}/projects/${project}/merge_requests/${mrIid}/discussions`,
+      `${apiBase()}/projects/${project}/merge_requests/${mrIid}/discussions`,
       {
         method: 'POST',
         body: JSON.stringify({
@@ -519,7 +531,7 @@ const addPRComment = async (ctx, repoId, mrIid, { body, path, line }) => {
   } else {
     const noteRes = await glFetch(
       ctx,
-      `${API_BASE}/projects/${project}/merge_requests/${mrIid}/notes`,
+      `${apiBase()}/projects/${project}/merge_requests/${mrIid}/notes`,
       { method: 'POST', body: JSON.stringify({ body }) },
     );
     result = await noteRes.json();
@@ -552,7 +564,7 @@ const listConstructionTaskBranches = async (ctx, repoId, branch) => {
   const prefix = constructionBranchPrefix(branch);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/branches?search=${encodeURIComponent(
+    `${apiBase()}/projects/${project}/repository/branches?search=${encodeURIComponent(
       prefix,
     )}&per_page=100`,
   );
@@ -572,7 +584,7 @@ const isBranchMergedInto = async (ctx, repoId, sourceBranch, targetBranch) => {
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/compare?from=${encodeURIComponent(
+    `${apiBase()}/projects/${project}/repository/compare?from=${encodeURIComponent(
       targetBranch,
     )}&to=${encodeURIComponent(sourceBranch)}`,
   );
@@ -622,7 +634,7 @@ const cleanupConstructionTaskBranches = async (ctx, repoId, branch) => {
     }
     const delRes = await glFetch(
       ctx,
-      `${API_BASE}/projects/${project}/repository/branches/${encodeURIComponent(taskBranch)}`,
+      `${apiBase()}/projects/${project}/repository/branches/${encodeURIComponent(taskBranch)}`,
       { method: 'DELETE' },
     );
     if (delRes.ok || delRes.status === 204) {
@@ -649,7 +661,7 @@ const findPullRequest = async (
   const project = encodeProject(repoId);
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/merge_requests?source_branch=${encodeURIComponent(
+    `${apiBase()}/projects/${project}/merge_requests?source_branch=${encodeURIComponent(
       sourceBranch,
     )}&state=${state}&per_page=100`,
   );
@@ -707,7 +719,7 @@ const createPullRequest = async (
   }
 
   const postMr = (target) =>
-    glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests`, {
+    glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests`, {
       method: 'POST',
       body: JSON.stringify({
         title: draft && !/^draft:/i.test(title) ? `Draft: ${title}` : title,
@@ -823,7 +835,7 @@ const compareBranches = async (ctx, repoId, { base, head }) => {
   const resolvedBase = base || (await getDefaultBranch(ctx, repoId)) || 'main';
   const res = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/repository/compare?from=${encodeURIComponent(
+    `${apiBase()}/projects/${project}/repository/compare?from=${encodeURIComponent(
       resolvedBase,
     )}&to=${encodeURIComponent(head)}`,
   );
@@ -831,7 +843,7 @@ const compareBranches = async (ctx, repoId, { base, head }) => {
     // Which side is missing? Probe the head branch.
     const headRes = await glFetch(
       ctx,
-      `${API_BASE}/projects/${project}/repository/branches/${encodeURIComponent(head)}`,
+      `${apiBase()}/projects/${project}/repository/branches/${encodeURIComponent(head)}`,
     );
     if (headRes.status === 404) return { status: 'missing_head', base: resolvedBase };
     if (headRes.ok) return { status: 'missing_base', base: resolvedBase };
@@ -853,7 +865,7 @@ const getPullRequestState = async (ctx, repoId, mrIid) => {
 
 const getPullRequestStatus = async (ctx, repoId, mrIid) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}`);
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}`);
   if (!res.ok) return null;
   const mr = await res.json();
   return {
@@ -886,7 +898,7 @@ const setPullRequestDraft = async (ctx, repoId, mrIid, draft) => {
   if (!current || current.state !== 'open') return current;
   if (current.draft === draft) return current;
   const plainTitle = String(current.title ?? '').replace(/^draft:\s*/i, '');
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}`, {
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}`, {
     method: 'PUT',
     body: JSON.stringify({ title: draft ? `Draft: ${plainTitle}` : plainTitle }),
   });
@@ -899,7 +911,7 @@ const setPullRequestDraft = async (ctx, repoId, mrIid, draft) => {
 
 const reopenPullRequest = async (ctx, repoId, mrIid) => {
   const project = encodeProject(repoId);
-  const res = await glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests/${mrIid}`, {
+  const res = await glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests/${mrIid}`, {
     method: 'PUT',
     body: JSON.stringify({ state_event: 'reopen' }),
   });
@@ -915,7 +927,7 @@ const isCommitAncestor = async (ctx, repoId, ancestorSha, descendantRef) => {
   for (let page = 1; page <= 100; page += 1) {
     const res = await glFetch(
       ctx,
-      `${API_BASE}/projects/${project}/repository/commits/${encodeURIComponent(
+      `${apiBase()}/projects/${project}/repository/commits/${encodeURIComponent(
         ancestorSha,
       )}/refs?type=branch&per_page=100&page=${page}`,
     );
@@ -935,7 +947,7 @@ const mergeBranch = async (ctx, repoId, { base, head, message }) => {
   const project = encodeProject(repoId);
   let createRes;
   try {
-    createRes = await glFetch(ctx, `${API_BASE}/projects/${project}/merge_requests`, {
+    createRes = await glFetch(ctx, `${apiBase()}/projects/${project}/merge_requests`, {
       method: 'POST',
       body: JSON.stringify({
         source_branch: head,
@@ -954,7 +966,7 @@ const mergeBranch = async (ctx, repoId, { base, head, message }) => {
   const mr = await createRes.json();
   const mergeRes = await glFetch(
     ctx,
-    `${API_BASE}/projects/${project}/merge_requests/${mr.iid}/merge`,
+    `${apiBase()}/projects/${project}/merge_requests/${mr.iid}/merge`,
     { method: 'PUT' },
   );
   if (mergeRes.ok) return 'merged';
@@ -969,12 +981,16 @@ const mergeBranch = async (ctx, repoId, { base, head, message }) => {
   return { error: `GitLab merge returned ${mergeRes.status}: ${text.slice(0, 300)}` };
 };
 
-const apiBase = API_BASE;
+// `gitHost` and `apiBase` are intentionally NOT plain values: the shared
+// git-providers.js barrel reads the provider's `.gitHost` as a PROPERTY and
+// callers may read `.apiBase`, so both must reflect GITLAB_BASE_URL at ACCESS
+// TIME. They are attached to the export object below via getters. `apiBase` is
+// also exported by name (as the call-time function) for direct callers/tests.
 export {
   id,
   displayName,
-  gitHost,
   apiBase,
+  getGitHost,
   buildCloneUrl,
   encodeProject,
   apiHeaders,
@@ -1008,11 +1024,10 @@ export {
   mergeBranch,
   constructionBranchPrefix,
 };
-export default {
+
+const gitlabProvider = {
   id,
   displayName,
-  gitHost,
-  apiBase,
   buildCloneUrl,
   encodeProject,
   apiHeaders,
@@ -1046,3 +1061,10 @@ export default {
   mergeBranch,
   constructionBranchPrefix,
 };
+
+// Expose host/api as getters so the barrel's `provider.gitHost` property read
+// and any `provider.apiBase` read resolve GITLAB_BASE_URL at access time.
+Object.defineProperty(gitlabProvider, 'gitHost', { get: getGitHost, enumerable: true });
+Object.defineProperty(gitlabProvider, 'apiBase', { get: apiBase, enumerable: true });
+
+export default gitlabProvider;

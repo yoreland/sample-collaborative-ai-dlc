@@ -177,6 +177,23 @@ describe('gitlab handler', () => {
       expect(body.url).toContain('response_type=code');
       expect(body.url).toContain(encodeURIComponent('api read_user'));
     });
+
+    it('emits the self-hosted authorize URL when GITLAB_BASE_URL is set', async () => {
+      vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+      mockOAuthSecret();
+
+      const handler = await loadHandler();
+      const res = await handler(makeEvent('GET', '/gitlab/auth'));
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.url).toContain('https://git.yoreland.online/oauth/authorize');
+      expect(body.url).not.toContain('https://gitlab.com/oauth/authorize');
+      expect(body.url).toContain(`client_id=${CLIENT_ID}`);
+      expect(body.url).toContain('state=');
+      expect(body.url).toContain('response_type=code');
+      expect(body.url).toContain(encodeURIComponent('api read_user'));
+    });
   });
 
   describe('GET /callback', () => {
