@@ -550,6 +550,7 @@ module "agentcore" {
   websocket_execution_arn     = module.realtime.websocket_execution_arn
   aidlc_repo_ref              = var.aidlc_repo_ref
   bedrock_model               = var.bedrock_model
+  gitlab_base_url             = var.gitlab_base_url
   # The kiro-cli build shipped in the agentcore image only accepts the "auto"
   # model selector; a concrete model id (e.g. "claude-opus-4.6") is rejected at
   # spawn with `error: Model '...' does not exist. Available models: auto`,

@@ -991,6 +991,10 @@ module "projects_lambda" {
     # save-time cross-tier collision check.
     MCP_SECRETS_SSM_PREFIX    = "/${var.project_name}/${var.environment}"
     AGENT_SETTINGS_SSM_PREFIX = "/${var.project_name}/${var.environment}"
+    # Repo-stack detection calls provider.getTree over the GitLab REST API and
+    # refreshes GitLab tokens, both of which resolve their host from this base.
+    # Without it, a self-hosted deploy silently falls back to gitlab.com.
+    GITLAB_BASE_URL = var.gitlab_base_url
   }
 }
 

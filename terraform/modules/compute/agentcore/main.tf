@@ -679,6 +679,7 @@ resource "awscc_bedrockagentcore_runtime" "stage_executor" {
     AWS_REGION                    = var.aws_region
     CREDENTIAL_BROKER_FUNCTION    = "${var.project_name}-credential-broker-${var.environment}"
     SOURCE_CONTROL_FUNCTION       = "${var.project_name}-source-control-${var.environment}"
+    GITLAB_BASE_URL               = var.gitlab_base_url
     BEDROCK_BEARER_TOKEN_SSM_PATH = aws_ssm_parameter.bedrock_bearer_token.name
     KIRO_API_KEY_SSM_PATH         = aws_ssm_parameter.kiro_api_key.name
     # Base SSM prefix for MCP secret resolution ({prefix}/mcp-secrets/<VAR> and

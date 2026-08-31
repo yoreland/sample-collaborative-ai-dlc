@@ -112,6 +112,42 @@ describe('GitLab self-hosted base URL (GITLAB_BASE_URL)', () => {
     expect(fetchImpl.calls[0].url.startsWith('https://git.yoreland.online/api/v4')).toBe(true);
   });
 
+  it('exchangeCode POSTs to the self-hosted token endpoint', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    const calls = [];
+    const fetchImpl = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve({ json: () => Promise.resolve({ access_token: 'AT' }) });
+    };
+    const exchanged = await getProvider('gitlab').oauth.exchangeCode({
+      clientId: 'cid',
+      clientSecret: 'secret',
+      code: 'abc',
+      redirectUri: 'https://app/gitlab/callback',
+      fetchImpl,
+    });
+    expect(calls[0].url).toBe('https://git.yoreland.online/oauth/token');
+    expect(calls[0].url).not.toContain('gitlab.com');
+    expect(exchanged.accessToken).toBe('AT');
+  });
+
+  it('exchangeCode POSTs to gitlab.com when GITLAB_BASE_URL is unset', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', '');
+    const calls = [];
+    const fetchImpl = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve({ json: () => Promise.resolve({ access_token: 'AT' }) });
+    };
+    await getProvider('gitlab').oauth.exchangeCode({
+      clientId: 'cid',
+      clientSecret: 'secret',
+      code: 'abc',
+      redirectUri: 'https://app/gitlab/callback',
+      fetchImpl,
+    });
+    expect(calls[0].url).toBe('https://gitlab.com/oauth/token');
+  });
+
   it('defaults to gitlab.com when GITLAB_BASE_URL is unset', () => {
     vi.stubEnv('GITLAB_BASE_URL', '');
     expect(gitHost('gitlab')).toBe('gitlab.com');
