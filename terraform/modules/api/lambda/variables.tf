@@ -173,6 +173,12 @@ variable "gitlab_redirect_uri" {
   default     = ""
 }
 
+variable "gitlab_base_url" {
+  description = "Base URL of the GitLab instance (self-hosted or gitlab.com). Drives the GitLab API, OAuth authorize/token, and clone-URL host. MUST be an https:// URL: API calls and the OAuth token exchange traverse this base carrying bearer/OAuth credentials, so a non-https value would send that traffic in cleartext."
+  type        = string
+  default     = "https://gitlab.com"
+}
+
 variable "bitbucket_oauth_secret_name" {
   description = "Secrets Manager secret name for Bitbucket OAuth credentials"
   type        = string

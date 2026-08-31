@@ -19,27 +19,17 @@ RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# Agent CLIs — installed for all supported drivers; selectCli picks what's
-# present at runtime. Kiro (API-key auth), Claude Code + OpenCode + Codex
-# (Bedrock).
+# Agent CLIs — installed for the supported drivers; selectCli picks what's
+# present at runtime. Kiro (API-key auth) + Claude Code (Bedrock). OpenCode and
+# Codex are intentionally omitted to keep the image under the AgentCore Runtime
+# maxImageSizeMb hard limit — discover.js probes each CLI's --version at startup
+# and only offers the ones present, so a slimmer image is a supported config.
 RUN curl -fsSL https://cli.kiro.dev/install | bash \
     && mkdir -p /opt/kiro \
     && cp -a /root/.local/bin /opt/kiro/bin \
     && ln -sf /opt/kiro/bin/kiro-cli /usr/local/bin/kiro-cli \
     && rm -rf /root/.local
 RUN npm install -g @anthropic-ai/claude-code
-ARG OPENCODE_VERSION=1.17.20
-RUN mkdir -p /opt/opencode/bin \
-    && curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-arm64.tar.gz" \
-    | tar -xz -C /opt/opencode/bin \
-    && chmod +x /opt/opencode/bin/opencode \
-    && /opt/opencode/bin/opencode --version | grep -F "${OPENCODE_VERSION}"
-# Codex — pinned for reproducibility (the npm package ships the arm64 binary).
-# The per-stage CODEX_HOME (config.toml) is materialized at run time; the
-# version assert catches a broken/mismatched install at build time.
-ARG CODEX_VERSION=0.145.0
-RUN npm install -g @openai/codex@${CODEX_VERSION} \
-    && codex --version | grep -F "${CODEX_VERSION}"
 
 # Bun — the runtime the deterministic CODE sensors (linter, type-check) run on.
 # They shell out to `bunx eslint`/`bunx tsc` against the workspace checkout, so
@@ -80,7 +70,7 @@ RUN ln -s /opt/agentcore/node_modules /opt/shared/node_modules
 # invocation time). Create a fallback dir for local/non-AgentCore runs; chown so
 # the node user can write the checkout + CLI stores when the mount is absent.
 RUN mkdir -p /mnt/workspace /home/node/.codex-state /home/node/.codex-runs \
-    && chown -R node:node /mnt/workspace /opt/agentcore /opt/shared /opt/kiro /opt/opencode /opt/bun /opt/uv /home/node/.codex-state /home/node/.codex-runs
+    && chown -R node:node /mnt/workspace /opt/agentcore /opt/shared /opt/kiro /opt/bun /opt/uv /home/node/.codex-state /home/node/.codex-runs
 
 WORKDIR /mnt/workspace
 USER node
@@ -100,7 +90,7 @@ USER node
 #    V2_CODEX_STORE_DIR; config, SQLite state, and non-resumable sessions never
 #    touch the managed mount. See cli/codex-store.js.
 ENV HOME=/home/node \
-    PATH=/opt/kiro/bin:/opt/opencode/bin:/opt/bun/bin:/opt/uv/bin:/usr/local/bin:/usr/bin:/bin \
+    PATH=/opt/kiro/bin:/opt/bun/bin:/opt/uv/bin:/usr/local/bin:/usr/bin:/bin \
     V2_WORKSPACE_DIR=/mnt/workspace \
     CLAUDE_CONFIG_DIR=/mnt/workspace/.claude \
     XDG_DATA_HOME=/home/node/.kiro-data \

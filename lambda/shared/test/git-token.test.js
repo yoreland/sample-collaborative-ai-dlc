@@ -122,6 +122,43 @@ describe('ensureFreshGitToken', () => {
     expect(ddbPut.Item.scope).toBe('api read_user');
   });
 
+  it('posts the refresh to the self-hosted token endpoint when GITLAB_BASE_URL is set', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    vi.stubEnv('GITLAB_REDIRECT_URI', 'https://app.example.com/gitlab/callback');
+    storeToken({
+      accessToken: 'old',
+      refreshToken: 'r1',
+      expiresAt: Date.now() + 60 * 1000, // inside the safety margin
+    });
+    secretsMock.on(GetSecretValueCommand).resolves({
+      SecretString: JSON.stringify({ client_id: 'cid', client_secret: 'csec' }),
+    });
+    ssmMock.on(PutParameterCommand).resolves({});
+    ddbMock.on(PutCommand).resolves({});
+    globalThis.fetch = vi.fn(async () => ({
+      json: async () => ({
+        access_token: 'fresh',
+        refresh_token: 'r2',
+        token_type: 'bearer',
+        expires_in: 7200,
+        scope: 'api read_user',
+      }),
+    }));
+
+    const out = await ensureFreshGitToken({ ssm, secrets, ddb, item: ITEM, gitProvider: 'gitlab' });
+
+    expect(out).toBe('fresh');
+    // The refresh POST targets the self-hosted token endpoint, not gitlab.com.
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://git.yoreland.online/oauth/token',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    // redirect_uri behavior is unchanged — still sent on the refresh grant.
+    const refreshBody = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+    expect(refreshBody.grant_type).toBe('refresh_token');
+    expect(refreshBody.redirect_uri).toBe('https://app.example.com/gitlab/callback');
+  });
+
   it('refreshes when no expiresAt is recorded (legacy row)', async () => {
     storeToken({ accessToken: 'old', refreshToken: 'r1' });
     secretsMock.on(GetSecretValueCommand).resolves({

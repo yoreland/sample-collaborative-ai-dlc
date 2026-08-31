@@ -106,6 +106,12 @@ variable "codex_model" {
 # the default — the runtime's ENIs are placed in dedicated subnets in this VPC
 # (in AgentCore-supported AZs) and reach Neptune over the VPC. Set to PUBLIC only
 # if you have no private dependency.
+variable "gitlab_base_url" {
+  description = "Base URL of the GitLab instance (self-hosted or gitlab.com). Drives the in-container clone-URL host for git clone. MUST be an https:// URL: the runtime's clone and any API/OAuth traffic derived from this base carry bearer/OAuth credentials, and a non-https value would send them in cleartext."
+  type        = string
+  default     = "https://gitlab.com"
+}
+
 variable "network_mode" {
   description = "AgentCore Runtime network mode (VPC or PUBLIC)"
   type        = string

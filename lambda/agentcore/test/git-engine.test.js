@@ -57,11 +57,29 @@ afterEach(async () => {
 });
 
 describe('cleanRemoteUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('builds a token-free https URL per provider', () => {
     expect(cleanRemoteUrl('owner/repo', 'github')).toBe('https://github.com/owner/repo.git');
     expect(cleanRemoteUrl('owner/repo', 'gitlab')).toBe('https://gitlab.com/owner/repo.git');
     // Legacy/blank provider defaults to github.
     expect(cleanRemoteUrl('owner/repo', undefined)).toBe('https://github.com/owner/repo.git');
+  });
+
+  // The agentcore clone path resolves the GitLab host through the shared
+  // git-providers barrel (buildCloneUrl → gitlab.js), so setting GITLAB_BASE_URL
+  // retargets it to a self-hosted instance with NO agentcore source change.
+  // Assert on the pure string cleanRemoteUrl returns (NOT `git remote get-url`,
+  // which the sandbox gitconfig url.insteadOf rules would rewrite).
+  it('inherits the self-hosted GitLab host from GITLAB_BASE_URL', () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    expect(cleanRemoteUrl('owner/repo', 'gitlab')).toBe(
+      'https://git.yoreland.online/owner/repo.git',
+    );
+    // github remains unaffected.
+    expect(cleanRemoteUrl('owner/repo', 'github')).toBe('https://github.com/owner/repo.git');
   });
 });
 

@@ -619,10 +619,11 @@ resource "aws_security_group" "agentcore" {
 # The AgentCore Runtime (awscc → AWS::BedrockAgentCore::Runtime)
 # ---------------------------------------------------------------------------
 
-# DEPLOY NOTE (env-specific, dev): disabled together with agentcore_docker_build
-# above — the runtime needs the arm64 image, which cannot be built in this
-# sandbox. Restore this resource once the image exists in ECR.
-/*
+# DEPLOY NOTE (env-specific, dev): the runtime is enabled, but the companion
+# agentcore_docker_build module above stays DISABLED: the arm64 image cannot be
+# built on the x86 apply host (gnupg/gpg-agent deadlocks under QEMU). The image
+# is built out-of-band on native arm64 (AWS CodeBuild) and pushed to ECR under
+# local.agentcore_image_tag, so container_uri references that static uri:tag.
 resource "awscc_bedrockagentcore_runtime" "stage_executor" {
   agent_runtime_name = replace("${var.project_name}_agentcore_${var.environment}", "-", "_")
   role_arn           = aws_iam_role.agentcore.arn
@@ -631,7 +632,7 @@ resource "awscc_bedrockagentcore_runtime" "stage_executor" {
 
   agent_runtime_artifact = {
     container_configuration = {
-      container_uri = module.agentcore_docker_build.image_uri
+      container_uri = "${aws_ecr_repository.agentcore.repository_url}:${local.agentcore_image_tag}"
     }
   }
 
@@ -679,6 +680,7 @@ resource "awscc_bedrockagentcore_runtime" "stage_executor" {
     AWS_REGION                    = var.aws_region
     CREDENTIAL_BROKER_FUNCTION    = "${var.project_name}-credential-broker-${var.environment}"
     SOURCE_CONTROL_FUNCTION       = "${var.project_name}-source-control-${var.environment}"
+    GITLAB_BASE_URL               = var.gitlab_base_url
     BEDROCK_BEARER_TOKEN_SSM_PATH = aws_ssm_parameter.bedrock_bearer_token.name
     KIRO_API_KEY_SSM_PATH         = aws_ssm_parameter.kiro_api_key.name
     # Base SSM prefix for MCP secret resolution ({prefix}/mcp-secrets/<VAR> and
@@ -688,4 +690,3 @@ resource "awscc_bedrockagentcore_runtime" "stage_executor" {
 
   tags = var.tags
 }
-*/
