@@ -9,13 +9,10 @@ output "ecr_repository_name" {
 }
 
 output "image_uri" {
-  description = "Full image URI (with content-hash tag) built for the runtime"
-  # DEPLOY NOTE (env-specific, dev): the AgentCore docker-build and runtime are
-  # disabled because the arm64 image cannot be built in this sandbox (gnupg/
-  # gpg-agent deadlocks under QEMU-user aarch64 emulation). Return the ECR image
-  # URI the build WOULD produce so downstream references stay well-formed. The
-  # image is not yet present in ECR; build it on a real arm64 host, then restore
-  # module.agentcore_docker_build and awscc_bedrockagentcore_runtime.
+  description = "Full image URI (with content-hash tag) the runtime references"
+  # The arm64 image is built out-of-band on native arm64 (AWS CodeBuild) and
+  # pushed to ECR under local.agentcore_image_tag; the runtime's container_uri
+  # references this exact uri:tag.
   value = "${aws_ecr_repository.agentcore.repository_url}:${local.agentcore_image_tag}"
 }
 
@@ -36,17 +33,12 @@ output "v2_executions_table_arn" {
 
 output "runtime_arn" {
   description = "ARN of the Bedrock AgentCore Runtime"
-  # DEPLOY NOTE (env-specific, dev): runtime disabled (image unbuildable in this
-  # sandbox). Return a well-formed placeholder ARN so downstream IAM policies and
-  # env vars remain valid; the runtime simply does not exist yet, so AI stage
-  # execution is unavailable until the image is built and the runtime restored.
-  value = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:runtime/${replace("${var.project_name}_agentcore_${var.environment}", "-", "_")}"
+  value       = awscc_bedrockagentcore_runtime.stage_executor.agent_runtime_arn
 }
 
 output "runtime_id" {
   description = "Id of the Bedrock AgentCore Runtime"
-  # DEPLOY NOTE (env-specific, dev): runtime disabled — placeholder id.
-  value = "${replace("${var.project_name}_agentcore_${var.environment}", "-", "_")}-disabled"
+  value       = awscc_bedrockagentcore_runtime.stage_executor.agent_runtime_id
 }
 
 output "role_arn" {
