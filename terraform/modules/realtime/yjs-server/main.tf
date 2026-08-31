@@ -75,32 +75,32 @@ resource "aws_ecr_lifecycle_policy" "yjs_server" {
 }
 
 # Docker build module
-module "yjs_docker_build" {
-  source  = "terraform-aws-modules/lambda/aws//modules/docker-build"
-  version = "~> 8.0"
-
-  create_ecr_repo = false
-  ecr_repo        = aws_ecr_repository.yjs_server.name
-  ecr_address     = format("%v.dkr.ecr.%v.%v", data.aws_caller_identity.current.account_id, data.aws_region.current.region, local.dns_suffix)
-
-  use_image_tag = true
-  # substr(var.build_after, 0, 0) is always "" — it exists only to create a
-  # plan-graph dependency on the agents image build, so the two docker builds
-  # never run concurrently (parallel kreuzwerker provider builds deadlock).
-  # It can never change the tag or trigger a rebuild.
-  image_tag        = "${local.yjs_image_tag}${substr(var.build_after, 0, 0)}"
-  source_path      = local.yjs_source_path
-  docker_file_path = "${local.yjs_source_path}/Dockerfile"
-  platform         = "linux/amd64"
-  # BuildKit session path instead of the provider's legacy tar.gz streaming —
-  # see the agents module for rationale.
-  builder    = "default"
-  build_args = var.docker_build_args
-
-  triggers = {
-    dir_sha = local.yjs_files_sha
-  }
-}
+# DEPLOY NOTE (env-specific, dev): the yjs-server image is pre-built (amd64,
+# native podman) and pushed to ECR out-of-band; the kreuzwerker docker provider's
+# buildkit-over-podman build stalls on this host's fuse-overlayfs backend. The
+# docker-build module is disabled so the ECS service converges against the
+# already-pushed ECR image (see the ECS task definition's `image`). Restore this
+# module (and image = module.yjs_docker_build.image_uri) on a normal build host.
+# module "yjs_docker_build" {
+#   source  = "terraform-aws-modules/lambda/aws//modules/docker-build"
+#   version = "~> 8.0"
+#
+#   create_ecr_repo = false
+#   ecr_repo        = aws_ecr_repository.yjs_server.name
+#   ecr_address     = format("%v.dkr.ecr.%v.%v", data.aws_caller_identity.current.account_id, data.aws_region.current.region, local.dns_suffix)
+#
+#   use_image_tag    = true
+#   image_tag        = "${local.yjs_image_tag}${substr(var.build_after, 0, 0)}"
+#   source_path      = local.yjs_source_path
+#   docker_file_path = "${local.yjs_source_path}/Dockerfile"
+#   platform         = "linux/amd64"
+#   builder          = "default"
+#   build_args       = var.docker_build_args
+#
+#   triggers = {
+#     dir_sha = local.yjs_files_sha
+#   }
+# }
 
 # ECS Cluster
 resource "aws_ecs_cluster" "main" {
@@ -190,8 +190,15 @@ resource "aws_ecs_task_definition" "yjs_server" {
   task_role_arn            = aws_iam_role.ecs_task.arn
 
   container_definitions = jsonencode([{
-    name      = "yjs-server"
-    image     = module.yjs_docker_build.image_uri
+    name = "yjs-server"
+    # DEPLOY NOTE (env-specific, dev): the image was pre-built (amd64, native
+    # podman) and pushed to ECR out-of-band because the kreuzwerker docker
+    # provider's buildkit-over-podman path stalls on layer extraction on this
+    # host's fuse-overlayfs backend. Referencing the ECR image URI directly
+    # (same tag the docker-build module computes) lets the ECS service converge
+    # without the provider rebuild. Restore to module.yjs_docker_build.image_uri
+    # on a normal build host.
+    image     = "${aws_ecr_repository.yjs_server.repository_url}:${local.yjs_image_tag}"
     essential = true
     portMappings = [{
       containerPort = 1234
