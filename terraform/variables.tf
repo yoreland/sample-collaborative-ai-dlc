@@ -22,6 +22,12 @@ variable "bedrock_model" {
   default     = "us.anthropic.claude-sonnet-4-6"
 }
 
+variable "gitlab_base_url" {
+  description = "Base URL of the GitLab instance (self-hosted or gitlab.com). Drives the GitLab API, OAuth authorize/token, and clone-URL host."
+  type        = string
+  default     = "https://gitlab.com"
+}
+
 variable "codex_model" {
   description = "Default Codex-on-Bedrock model id (exact openai.* id, e.g. openai.gpt-5.5) seeded into the cli-models SSM parameter (empty = none)"
   type        = string

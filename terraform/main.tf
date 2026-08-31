@@ -394,6 +394,7 @@ module "lambda" {
   tracker_connections_table_arn       = module.git.tracker_connections_table_arn
   github_redirect_uri                 = "${local.app_url}/github/callback"
   gitlab_redirect_uri                 = "${local.app_url}/gitlab/callback"
+  gitlab_base_url                     = var.gitlab_base_url
   bitbucket_redirect_uri              = "${local.app_url}/bitbucket/callback"
   jira_oauth_secret_name              = module.git.jira_oauth_secret_name
   jira_oauth_secret_arn               = module.git.jira_oauth_secret_arn

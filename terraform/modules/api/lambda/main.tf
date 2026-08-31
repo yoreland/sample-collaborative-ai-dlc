@@ -838,6 +838,7 @@ module "source_control_lambda" {
     GITHUB_APP_PRIVATE_KEY_SECRET_NAME = var.github_app_private_key_secret_name
     GITLAB_OAUTH_SECRET_NAME           = var.gitlab_oauth_secret_name
     GITLAB_REDIRECT_URI                = var.gitlab_redirect_uri
+    GITLAB_BASE_URL                    = var.gitlab_base_url
     BITBUCKET_OAUTH_SECRET_NAME        = var.bitbucket_oauth_secret_name
     ENVIRONMENT                        = var.environment
     CORS_ALLOWED_ORIGINS               = var.cors_allowed_origins
@@ -932,6 +933,7 @@ module "credential_broker_lambda" {
     GITHUB_APP_PRIVATE_KEY_SECRET_NAME = var.github_app_private_key_secret_name
     GITLAB_OAUTH_SECRET_NAME           = var.gitlab_oauth_secret_name
     GITLAB_REDIRECT_URI                = var.gitlab_redirect_uri
+    GITLAB_BASE_URL                    = var.gitlab_base_url
     BITBUCKET_OAUTH_SECRET_NAME        = var.bitbucket_oauth_secret_name
   }
 }
@@ -1465,6 +1467,7 @@ module "gitlab_lambda" {
     SOURCE_CONTROL_BINDINGS_TABLE  = var.source_control_bindings_table_name
     GIT_TOKEN_SSM_PREFIX           = "${var.project_name}/${var.environment}/git-token"
     GITLAB_REDIRECT_URI            = var.gitlab_redirect_uri
+    GITLAB_BASE_URL                = var.gitlab_base_url
     ENVIRONMENT                    = var.environment
     CORS_ALLOWED_ORIGINS           = var.cors_allowed_origins
   }
@@ -1600,6 +1603,7 @@ module "trackers_lambda" {
     GITHUB_OAUTH_SECRET_NAME       = var.github_oauth_secret_name
     GITLAB_OAUTH_SECRET_NAME       = var.gitlab_oauth_secret_name
     GITLAB_REDIRECT_URI            = var.gitlab_redirect_uri
+    GITLAB_BASE_URL                = var.gitlab_base_url
     SOURCE_CONTROL_FUNCTION        = module.source_control_lambda.lambda_function_name
     SOURCE_CONTROL_BINDINGS_TABLE  = var.source_control_bindings_table_name
     V2_PROCESS_TABLE               = var.v2_executions_table_name
