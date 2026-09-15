@@ -1,0 +1,36 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Environment setup and green baseline. Create the isolated feature branch off `main` (do NOT disturb the checked-out fix/yjs-prebuilt-image branch or its commits), install dependencies, and confirm the existing seed-blocks / workflows / building-blocks test suites and the seed-blocks esbuild bundle pass BEFORE any BMAD work. This establishes the baseline the later features must not regress.",
+  "status": "completed",
+  "steps": [
+    "From /projects/sandbox/sample-collaborative-ai-dlc, confirm the default branch is `main` (already confirmed via `gh api repos/yoreland/sample-collaborative-ai-dlc --jq .default_branch`).",
+    "Create and check out a new branch off origin/main WITHOUT losing the current branch's work: `git fetch origin main` then `git checkout -b feat/bmad-workflow origin/main`. Verify `git log --oneline -1` points at main's tip and the fix/yjs-prebuilt-image branch is untouched (`git branch` still lists it).",
+    "Run `npm install` at the repo root to install workspace dependencies.",
+    "Run `npm run build -w seed-blocks` and confirm the esbuild bundle succeeds (produces lambda/seed-blocks/.build/index.mjs).",
+    "Run `npx vitest run --project=seed-blocks --project=workflows --project=building-blocks` from the repo root. If the vitest globalSetup (DynamoDB Local + Gremlin testcontainers, requires docker) fails to start, note it and instead run just the seed-blocks project (which mocks AWS via aws-sdk-client-mock and needs no real AWS/docker). Record which suites ran green.",
+    "Run `npm run format:check` and `npm run lint` to capture the clean baseline (oxfmt/oxlint)."
+  ],
+  "acceptance_criteria": [
+    "Branch feat/bmad-workflow exists off main; fix/yjs-prebuilt-image branch and its commits are intact and unmodified.",
+    "`npm run build -w seed-blocks` completes without error.",
+    "The seed-blocks vitest project passes on a clean checkout (and workflows/building-blocks pass, or the reason they cannot start locally, e.g. missing docker for testcontainers, is recorded in findings).",
+    "Baseline lint/format status recorded in findings."
+  ],
+  "verification": [
+    "git branch --show-current prints feat/bmad-workflow; git branch lists fix/yjs-prebuilt-image; git log origin/fix/yjs-prebuilt-image is unchanged",
+    "npm run build -w seed-blocks exits 0",
+    "npx vitest run --project=seed-blocks exits 0"
+  ],
+  "blocked_reason": null,
+  "findings": {
+    "branch": "feat/bmad-workflow created off origin/main (tip 9f76544, matching origin/main). fix/yjs-prebuilt-image is intact and unmodified: its local + origin tip is still 17e1eb7 (chore: bump root package version to 2.0.1) on top of 8de42c4 (fix(yjs): use prebuilt public ECR image). git branch lists feat/bmad-workflow (current), fix/yjs-prebuilt-image, and main. No commit was made for this feature: it is env setup only, there are no source changes to commit. Only .agents/ (task state) is untracked; lambda/seed-blocks/.build/ is gitignored.",
+    "node_env": "node is provided via nvm, NOT on the default PATH. Use `export PATH=\"$HOME/.nvm/versions/node/v24.19.0/bin:$PATH\"` (Node v24.19.0, npm 11.4.2 -- matches the Node 24 target) before any npm/npx/node command. Available nvm versions: v18.20.8, v20.20.2, v22.23.2, v24.19.0. A plain `bash -lc` login shell defaults to v22.23.2.",
+    "npm_install": "`npm install` at repo root succeeded: 609 packages added, 643 audited (~10s). 9 npm-audit vulnerabilities reported (5 moderate, 4 high) -- pre-existing, not addressed (out of scope).",
+    "build": "`npm run build -w seed-blocks` GREEN. esbuild bundle produced lambda/seed-blocks/.build/index.mjs (~205KB), exit 0.",
+    "tests": "seed-blocks 15/15 PASS, building-blocks 30/30 PASS, workflows 30/30 PASS (75 tests total, all green with AWS mocked via aws-sdk-client-mock).",
+    "testcontainers_blocker": "IMPORTANT for later features: `npx vitest run` fails at globalSetup before ANY test runs. vitest.config.js globalSetup spins up gremlin-server + dynamodb-local via the `testcontainers` npm client. The sandbox uses rootless Podman 5.2.3 (docker CLI is a podman shim; there is NO /var/run/docker.sock). `docker ps` and `podman pull` work (both required images pull fine over the network), BUT the testcontainers Node client cannot complete its runtime-strategy detection against the rootless podman socket -- it throws 'Could not find a working container runtime strategy'. I started `podman system service unix:///tmp/podman.sock`; /_ping returned OK but /info hung, and `getContainerRuntimeClient()` still failed. So the graph/dynamo-backed suites (any test needing NEPTUNE_ENDPOINT/GREMLIN_PORT or DDB endpoint from globalSetup) cannot run locally in this sandbox. WORKAROUND used to get a green baseline: ran the AWS-mocked projects with a temporary config that omits globalSetup. Reproduce with a throwaway config (do NOT commit it) that mirrors vitest.config.js's `projects` array but drops the `globalSetup` key, then `npx vitest run --config <tmp> --project=seed-blocks [...]`. The seed-blocks/workflows/building-blocks suites need NO container -- they only set BLOCKS_TABLE/ARTIFACTS_BUCKET/AIDLC_REPO_REF env vars and mock AWS SDK. New bmad tests added in later features should follow the same mock-only pattern so they run without testcontainers.",
+    "lint_format": "Baseline clean. `npm run format:check` (oxfmt) exit 0 -- all 769 files correctly formatted. `npm run lint` (oxlint) exit 0 -- 0 errors, 14 pre-existing warnings (e.g. eslint(no-underscore-dangle) on _installationTokenCache/_installationAccountCache in lambda/shared/git-token.js). Keep new code error-free and formatted so the pre-commit hook (oxfmt/oxlint/secretlint/vitest --changed) passes.",
+    "terraform": "Terraform binary is NOT installed (confirmed by context.json). Validate only at data/unit-test level."
+  }
+}

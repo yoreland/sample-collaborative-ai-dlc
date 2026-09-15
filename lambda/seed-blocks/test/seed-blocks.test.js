@@ -8,7 +8,9 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { CORE_FILES } from '../../shared/test/fixtures/repo-files.js';
-import { buildFromFiles } from '../../shared/block-mappers.js';
+import { CORE_FILES as BMAD_CORE_FILES } from '../bmad/index.js';
+import { buildFromFiles, buildBmadDataset } from '../../shared/block-mappers.js';
+import { validateBlockInput, validateId } from '../../shared/blocks.js';
 
 const BLOCKS_TABLE = 'blocks-test';
 const ARTIFACTS_BUCKET = 'artifacts-test';
@@ -79,7 +81,10 @@ const installFakes = () => {
 // The blocks + workflow the fixtures compile to (the seed should write these).
 const { blocks: FIXTURE_BLOCKS, runtimeFiles: FIXTURE_RUNTIME } = buildFromFiles(CORE_FILES);
 const BLOCK_COUNT = FIXTURE_BLOCKS.length;
-const TOTAL = BLOCK_COUNT + 1; // + the one workflow
+// The bmad dataset the seed ALSO writes, parallel to aidlc-v2.
+const { blocks: BMAD_BLOCKS, workflow: BMAD_WORKFLOW } = buildBmadDataset(BMAD_CORE_FILES);
+// aidlc-v2 blocks + its workflow + bmad blocks + the bmad workflow.
+const TOTAL = BLOCK_COUNT + 1 + BMAD_BLOCKS.length + 1;
 
 let handler;
 
@@ -280,5 +285,114 @@ describe('seed-blocks reseed mode', () => {
     expect(result.dryRun).toBe(true);
     expect(result.cleared).toBeGreaterThan(0);
     expect(tableStore.size).toBe(before);
+  });
+});
+
+describe('seed-blocks bmad parallel workflow', () => {
+  it('seeds every bmad block as a SYSTEM V#latest + V#1 pair with bodies in S3', async () => {
+    await handler({});
+    expect(BMAD_BLOCKS.length).toBeGreaterThan(0);
+    for (const block of BMAD_BLOCKS) {
+      const pk = `BLOCK#SYSTEM#${block.type}#${block.id}`;
+      expect(tableStore.has(`${pk}|V#latest`)).toBe(true);
+      expect(tableStore.has(`${pk}|V#1`)).toBe(true);
+      expect(tableStore.get(`${pk}|V#latest`).GSI1PK).toBe(`TENANT#SYSTEM#${block.type}`);
+      if (block.body) {
+        const item = tableStore.get(`${pk}|V#latest`);
+        expect(item.bodyRef.s3Key).toMatch(/^blocks\/bodies\/sha256\//);
+        expect(item.body).toBeUndefined();
+        expect(s3Store.get(item.bodyRef.s3Key)).toBe(block.body);
+      }
+    }
+  });
+
+  it('seeds the WF#SYSTEM#bmad workflow partition parallel to aidlc-v2', async () => {
+    await handler({});
+    const pk = 'WF#SYSTEM#bmad';
+    const meta = tableStore.get(`${pk}|META`);
+    expect(meta).toBeTruthy();
+    expect(meta.workflowId).toBe('bmad');
+    expect(meta.name).toBe('BMAD (parallel to AI-DLC v2)');
+    expect(meta.status).toBe('PUBLISHED');
+    expect(meta.GSI1PK).toBe('TENANT#SYSTEM#WORKFLOW');
+    expect(meta.defaultScope).toBe('bmad-brownfield');
+    expect(tableStore.has(`${pk}|V#1#META`)).toBe(true);
+    // PHASE# rows (same 5-phase tree as aidlc-v2).
+    expect(tableStore.has(`${pk}|PHASE#02#ideation`)).toBe(true);
+    expect(tableStore.has(`${pk}|PHASE#03#inception`)).toBe(true);
+    // PLACEMENT#bmad-* rows for the bmad stages, with V#1 snapshots.
+    expect(tableStore.has(`${pk}|PLACEMENT#bmad-prd`)).toBe(true);
+    expect(tableStore.get(`${pk}|V#1#PLACEMENT#bmad-prd`).pinnedVersion).toBe(1);
+    // Both bmad scopes are exposed as SCOPEREF rows (+ their V#1 snapshots).
+    expect(tableStore.has(`${pk}|SCOPEREF#bmad-brownfield`)).toBe(true);
+    expect(tableStore.has(`${pk}|SCOPEREF#bmad-greenfield`)).toBe(true);
+    expect(tableStore.has(`${pk}|V#1#SCOPEREF#bmad-brownfield`)).toBe(true);
+  });
+
+  it('keeps the aidlc-v2 workflow + its blocks seeded unchanged alongside bmad', async () => {
+    await handler({});
+    // aidlc-v2 workflow still present.
+    expect(tableStore.get('WF#SYSTEM#aidlc-v2|META').workflowId).toBe('aidlc-v2');
+    expect(tableStore.has('WF#SYSTEM#aidlc-v2|PLACEMENT#intent-capture')).toBe(true);
+    // Every aidlc-v2 fixture block still seeded.
+    for (const block of FIXTURE_BLOCKS) {
+      expect(tableStore.has(`BLOCK#SYSTEM#${block.type}#${block.id}|V#latest`)).toBe(true);
+    }
+  });
+
+  it('never lets a bmad-* id collide with an aidlc-* id', async () => {
+    // Type#id keys must be disjoint across the two datasets.
+    const aidlcKeys = new Set(FIXTURE_BLOCKS.map((b) => `${b.type}#${b.id}`));
+    const bmadKeys = new Set(BMAD_BLOCKS.map((b) => `${b.type}#${b.id}`));
+    for (const k of bmadKeys) expect(aidlcKeys.has(k)).toBe(false);
+    // No bmad id is prefixed aidlc-, and the two workflow ids differ.
+    for (const b of BMAD_BLOCKS) expect(b.id.startsWith('aidlc-')).toBe(false);
+    expect(BMAD_WORKFLOW.id).toBe('bmad');
+  });
+
+  it('produces bmad blocks that all pass validateBlockInput / validateId (schema validity)', () => {
+    for (const block of BMAD_BLOCKS) {
+      expect(validateId(block.id)).toBeNull();
+      if (block.type === 'ARTIFACT') continue; // artifacts are derived, not authored inputs
+      const errors = validateBlockInput(block.type, block);
+      expect(errors, `${block.type}#${block.id}: ${errors.join('; ')}`).toEqual([]);
+    }
+  });
+
+  it('wires a clean artifact DAG: every stage consumes an artifact some stage produces', () => {
+    const stages = BMAD_BLOCKS.filter((b) => b.type === 'STAGE');
+    const produced = new Set();
+    for (const s of stages) {
+      for (const a of [...(s.produces ?? []), ...(s.optionalProduces ?? [])]) produced.add(a);
+    }
+    for (const s of stages) {
+      for (const edge of s.consumes ?? []) {
+        expect(produced.has(edge.artifact), `${s.id} consumes orphan ${edge.artifact}`).toBe(true);
+      }
+    }
+  });
+
+  it('gives brownfield/greenfield-only stages the correct per-scope EXECUTE membership', () => {
+    const placementOf = (stageId) =>
+      BMAD_WORKFLOW.placements.find((p) => p.stageId === stageId)?.scopeMembership ?? {};
+    // Brownfield-only stages execute only under bmad-brownfield.
+    for (const stageId of ['bmad-document-project', 'bmad-generate-project-context']) {
+      const m = placementOf(stageId);
+      expect(m['bmad-brownfield']).toBe('EXECUTE');
+      expect(m['bmad-greenfield']).toBeUndefined();
+    }
+    // Greenfield-only stages execute only under bmad-greenfield.
+    for (const stageId of [
+      'bmad-generate-project-context-greenfield',
+      'bmad-backfill-project-context',
+    ]) {
+      const m = placementOf(stageId);
+      expect(m['bmad-greenfield']).toBe('EXECUTE');
+      expect(m['bmad-brownfield']).toBeUndefined();
+    }
+    // A shared stage executes under both.
+    const prd = placementOf('bmad-prd');
+    expect(prd['bmad-brownfield']).toBe('EXECUTE');
+    expect(prd['bmad-greenfield']).toBe('EXECUTE');
   });
 });

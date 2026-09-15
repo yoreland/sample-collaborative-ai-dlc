@@ -11,8 +11,18 @@
 //     a commit-pinned S3 snapshot under aidlc-runtime/<ref>/<repo-path> — NOT
 //     editable blocks, but available for the execution layer to inject.
 //
+// It ALSO seeds the fork-local `bmad` parallel workflow: a second read-only
+// SYSTEM workflow (WF#SYSTEM#bmad) modeling the BMAD workshop flow, plus its
+// bmad-* SYSTEM blocks. Unlike aidlc-v2, the bmad dataset is NOT fetched from
+// upstream — it is authored in this fork under lambda/seed-blocks/bmad/ and
+// bundled into this Lambda by esbuild (no network needed). Both workflows are
+// written in one run and honor the same dryRun / reseed / insert-only
+// semantics; reseed's clearSystemPartitions clears both (bmad is SYSTEM-owned).
+//
 // The pinned ref comes from the AIDLC_REPO_REF env var (set by Terraform) and
-// can be overridden per-invoke with {"ref":"<sha|tag|branch>"}.
+// can be overridden per-invoke with {"ref":"<sha|tag|branch>"}. The bmad
+// dataset is ref-independent — it is fork-local source, not tied to any
+// upstream commit.
 //
 // Admin one-shot, invoked directly via `aws lambda invoke` (no API route):
 //
@@ -55,7 +65,9 @@ import {
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SYSTEM_TENANT } from '../shared/tenant.js';
 import { fetchCoreFiles } from '../shared/repo-fetch.js';
-import { buildFromFiles } from '../shared/block-mappers.js';
+import { buildFromFiles, buildBmadDataset } from '../shared/block-mappers.js';
+// Fork-local BMAD dataset (bundled by esbuild as inlined text, not fetched).
+import { CORE_FILES as BMAD_CORE_FILES } from './bmad/index.js';
 import {
   LATEST,
   blockPk,
@@ -240,28 +252,11 @@ const putObject = (key, body, contentType) =>
     }),
   );
 
-export const handler = async (event = {}) => {
-  const dryRun = event?.dryRun === true;
-  const reseed = event?.reseed === true;
-  const ref = event?.ref || defaultRef();
-  if (!ref) {
-    throw new Error('seed-blocks: no repo ref — set AIDLC_REPO_REF or pass {"ref":"<sha>"}');
-  }
-  const now = new Date().toISOString();
-  const seeded = [];
-  const skipped = [];
-
-  // Fetch + parse the pinned repo. Hard-fails (no fallback) — a partial or
-  // stale seed is worse than a clear failure the operator retries.
-  const files = await fetchCoreFiles(ref);
-  const { blocks, workflow, sensorScripts, runtimeFiles } = buildFromFiles(files);
-
-  // Reseed: clear the SYSTEM baseline first so the writes below land fresh.
-  let cleared = 0;
-  if (reseed) {
-    cleared = await clearSystemPartitions(dryRun);
-  }
-
+// Seeds one block set (aidlc-v2 or bmad) as V#latest + V#1 pairs with bodies
+// (and sensor scripts) externalized to S3. Insert-only via a conditional put on
+// V#latest; already-present blocks are skipped. Mutates seeded/skipped. On
+// dryRun it reports every block without writing.
+const seedBlocks = async ({ blocks, sensorScripts }, now, dryRun, seeded, skipped) => {
   for (const block of blocks) {
     const bodyRef = block.body ? buildBodyRef(block.body) : null;
     const script = block.type === 'SENSOR' ? sensorScripts.get(block.id)?.content : null;
@@ -300,34 +295,85 @@ export const handler = async (event = {}) => {
       throw err;
     }
   }
+};
 
-  // The default workflow: the "from default" fork source. Guard on the META
-  // item; only when it is newly created do we write the children.
-  const wf = workflow;
+// Seeds one workflow partition (META + phases + placements + rule/scope refs +
+// V#1 snapshots). Guard on the META item; only when it is newly created do we
+// write the children. Mutates seeded/skipped.
+const seedWorkflow = async (wf, now, dryRun, seeded, skipped) => {
   if (dryRun) {
     seeded.push(`WORKFLOW#${wf.id}`);
-  } else {
-    const { meta, children } = buildWorkflowItems(wf, now);
-    try {
-      await ddb.send(
-        new PutCommand({
-          TableName: blocksTable(),
-          Item: meta,
-          ConditionExpression: 'attribute_not_exists(pk)',
-        }),
-      );
-      for (const child of children) {
-        await ddb.send(new PutCommand({ TableName: blocksTable(), Item: child }));
-      }
-      seeded.push(`WORKFLOW#${wf.id}`);
-    } catch (err) {
-      if (isConditionalCheckFailed(err)) {
-        skipped.push(`WORKFLOW#${wf.id}`);
-      } else {
-        throw err;
-      }
+    return;
+  }
+  const { meta, children } = buildWorkflowItems(wf, now);
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: blocksTable(),
+        Item: meta,
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }),
+    );
+    for (const child of children) {
+      await ddb.send(new PutCommand({ TableName: blocksTable(), Item: child }));
+    }
+    seeded.push(`WORKFLOW#${wf.id}`);
+  } catch (err) {
+    if (isConditionalCheckFailed(err)) {
+      skipped.push(`WORKFLOW#${wf.id}`);
+    } else {
+      throw err;
     }
   }
+};
+
+export const handler = async (event = {}) => {
+  const dryRun = event?.dryRun === true;
+  const reseed = event?.reseed === true;
+  const ref = event?.ref || defaultRef();
+  if (!ref) {
+    throw new Error('seed-blocks: no repo ref — set AIDLC_REPO_REF or pass {"ref":"<sha>"}');
+  }
+  const now = new Date().toISOString();
+  const seeded = [];
+  const skipped = [];
+
+  // Fetch + parse the pinned repo. Hard-fails (no fallback) — a partial or
+  // stale seed is worse than a clear failure the operator retries.
+  const files = await fetchCoreFiles(ref);
+  const { blocks, workflow, sensorScripts, runtimeFiles } = buildFromFiles(files);
+
+  // The fork-local BMAD dataset (bundled, not fetched) → the parallel `bmad`
+  // SYSTEM workflow + its bmad-* blocks. Built with its own workflow builder so
+  // it never feeds the aidlc-v2 workflow and vice-versa.
+  const {
+    blocks: bmadBlocks,
+    workflow: bmadWorkflow,
+    sensorScripts: bmadSensorScripts,
+  } = buildBmadDataset(BMAD_CORE_FILES);
+
+  // Reseed: clear the SYSTEM baseline first so the writes below land fresh.
+  // clearSystemPartitions deletes ALL BLOCK#SYSTEM#* and WF#SYSTEM#*, so both
+  // aidlc-v2 and bmad are cleared and rewritten in the same run.
+  let cleared = 0;
+  if (reseed) {
+    cleared = await clearSystemPartitions(dryRun);
+  }
+
+  // aidlc-v2 baseline: blocks then the default workflow (the "from default"
+  // fork source).
+  await seedBlocks({ blocks, sensorScripts }, now, dryRun, seeded, skipped);
+  await seedWorkflow(workflow, now, dryRun, seeded, skipped);
+
+  // bmad parallel workflow: its blocks then the WF#SYSTEM#bmad partition.
+  await seedBlocks(
+    { blocks: bmadBlocks, sensorScripts: bmadSensorScripts },
+    now,
+    dryRun,
+    seeded,
+    skipped,
+  );
+  await seedWorkflow(bmadWorkflow, now, dryRun, seeded, skipped);
 
   // Internal runtime snapshot: the engine tools, hooks, protocols, and
   // conductor, written to a commit-pinned S3 prefix so the execution layer can
@@ -367,7 +413,9 @@ export const handler = async (event = {}) => {
     reseed,
     ref,
     cleared,
-    total: blocks.length + 1,
+    // aidlc-v2 blocks + its workflow, plus bmad blocks + the bmad workflow.
+    total: blocks.length + 1 + bmadBlocks.length + 1,
+    bmadBlocks: bmadBlocks.length,
     runtimeFiles: runtimeWritten,
     sensorScripts: sensorScripts.size,
     seeded,

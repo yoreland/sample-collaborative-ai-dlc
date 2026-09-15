@@ -316,7 +316,18 @@ const topologicalStageOrder = (stages) => {
   return [...ordered, ...leftover];
 };
 
-const buildDefaultWorkflow = (stages, rules) => {
+// The aidlc-v2 default workflow identity. Kept as the DEFAULT options so
+// buildDefaultWorkflow() with no options produces the exact same workflow it
+// always has — the seed-blocks/workflows/building-blocks tests stay unchanged.
+const AIDLC_V2_WORKFLOW = {
+  id: 'aidlc-v2',
+  name: 'AI-DLC v2 (default)',
+  objective: 'The default AI-DLC v2 flow — the full 32-stage methodology to fork and tailor.',
+  defaultScope: 'feature',
+};
+
+const buildDefaultWorkflow = (stages, rules, options = {}) => {
+  const { id, name, objective, defaultScope } = { ...AIDLC_V2_WORKFLOW, ...options };
   // Placements run in `order`, so `order` must be a dependency-respecting
   // linearization (topological, with a phase-then-id tiebreak) — not raw
   // alphabetical, which would place gate stages ahead of their inputs.
@@ -341,16 +352,31 @@ const buildDefaultWorkflow = (stages, rules) => {
     .toSorted()
     .map((scopeId) => ({ scopeId }));
   return {
-    id: 'aidlc-v2',
-    name: 'AI-DLC v2 (default)',
-    objective: 'The default AI-DLC v2 flow — the full 32-stage methodology to fork and tailor.',
-    defaultScope: 'feature',
+    id,
+    name,
+    objective,
+    defaultScope,
     phases,
     placements,
     ruleRefs,
     scopeRefs,
   };
 };
+
+// The fork-local BMAD workflow, seeded as a SECOND read-only SYSTEM workflow
+// parallel to aidlc-v2. Same builder, only the identity differs: id `bmad`
+// (never the hardcoded aidlc-v2 id), and defaultScope `bmad-brownfield` (the
+// BMAD path that starts by documenting an existing codebase). The topological
+// order, phase tree, and per-scope placement membership are derived from the
+// bmad stages exactly like aidlc-v2.
+const buildBmadWorkflow = (stages, rules) =>
+  buildDefaultWorkflow(stages, rules, {
+    id: 'bmad',
+    name: 'BMAD (parallel to AI-DLC v2)',
+    objective:
+      'The BMAD workshop flow modeled as building blocks: brownfield/greenfield paths through PRD, architecture, story creation, ATDD, and the dev loop, with test-architect and party-mode review gates.',
+    defaultScope: 'bmad-brownfield',
+  });
 
 // Files under core/ that are pure runtime machinery (engine code + lifecycle
 // hooks + protocols/conductor) — NOT editable blocks. They are seeded to the
@@ -372,7 +398,7 @@ const sensorScriptPath = (sensorId) => `core/tools/aidlc-sensor-${sensorId}.ts`;
 // `scopes` field is kept on the intermediate stage objects only long enough to
 // build the workflow placements; it is stripped from the persisted STAGE block
 // (V2's scope membership lives on the workflow placement, not the stage).
-const buildFromFiles = (files) => {
+const buildFromFiles = (files, buildWorkflow = buildDefaultWorkflow) => {
   const stagesWithScopes = [];
   const blocks = [];
 
@@ -415,7 +441,7 @@ const buildFromFiles = (files) => {
   const artifacts = buildArtifacts(stages);
 
   const allBlocks = [...blocks, ...artifacts];
-  const workflow = buildDefaultWorkflow(stagesWithScopes, rules);
+  const workflow = buildWorkflow(stagesWithScopes, rules);
 
   // Sensor scripts: pair each SENSOR with its core/tools/aidlc-sensor-<id>.ts.
   const sensorScripts = new Map();
@@ -436,10 +462,20 @@ const buildFromFiles = (files) => {
   return { blocks: allBlocks, workflow, sensorScripts, runtimeFiles };
 };
 
+// Builds every bmad block + the `bmad` workflow from the fork-local dataset Map.
+// It reuses the SAME block-building loop as aidlc-v2 (buildFromFiles), only
+// swapping the workflow builder for buildBmadWorkflow so the bmad stages/rules
+// derive a `bmad`-id workflow instead of the aidlc-v2 default. The bmad dataset
+// never feeds the aidlc-v2 workflow and vice-versa: each is built from its own
+// files with its own builder.
+const buildBmadDataset = (files) => buildFromFiles(files, buildBmadWorkflow);
+
 export {
   buildFromFiles,
+  buildBmadDataset,
   buildArtifacts,
   buildDefaultWorkflow,
+  buildBmadWorkflow,
   isRuntimeFile,
   sensorScriptPath,
   titleCase,
@@ -455,8 +491,10 @@ export {
 };
 export default {
   buildFromFiles,
+  buildBmadDataset,
   buildArtifacts,
   buildDefaultWorkflow,
+  buildBmadWorkflow,
   isRuntimeFile,
   sensorScriptPath,
   titleCase,
