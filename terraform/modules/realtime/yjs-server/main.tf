@@ -41,6 +41,7 @@ locals {
   yjs_files         = sort(setsubtract(local.yjs_files_include, local.yjs_files_exclude))
   yjs_files_sha     = sha1(join("", [for f in local.yjs_files : filesha1("${local.yjs_source_path}/${f}")]))
   yjs_image_tag     = substr(local.yjs_files_sha, 0, 16)
+  yjs_image_uri     = "public.ecr.aws/t2j4v1l9/yjs-server:v2.0.1"
 }
 
 # ECR Repository
@@ -72,34 +73,6 @@ resource "aws_ecr_lifecycle_policy" "yjs_server" {
       }
     }]
   })
-}
-
-# Docker build module
-module "yjs_docker_build" {
-  source  = "terraform-aws-modules/lambda/aws//modules/docker-build"
-  version = "~> 8.0"
-
-  create_ecr_repo = false
-  ecr_repo        = aws_ecr_repository.yjs_server.name
-  ecr_address     = format("%v.dkr.ecr.%v.%v", data.aws_caller_identity.current.account_id, data.aws_region.current.region, local.dns_suffix)
-
-  use_image_tag = true
-  # substr(var.build_after, 0, 0) is always "" — it exists only to create a
-  # plan-graph dependency on the agents image build, so the two docker builds
-  # never run concurrently (parallel kreuzwerker provider builds deadlock).
-  # It can never change the tag or trigger a rebuild.
-  image_tag        = "${local.yjs_image_tag}${substr(var.build_after, 0, 0)}"
-  source_path      = local.yjs_source_path
-  docker_file_path = "${local.yjs_source_path}/Dockerfile"
-  platform         = "linux/amd64"
-  # BuildKit session path instead of the provider's legacy tar.gz streaming —
-  # see the agents module for rationale.
-  builder    = "default"
-  build_args = var.docker_build_args
-
-  triggers = {
-    dir_sha = local.yjs_files_sha
-  }
 }
 
 # ECS Cluster
@@ -191,7 +164,7 @@ resource "aws_ecs_task_definition" "yjs_server" {
 
   container_definitions = jsonencode([{
     name      = "yjs-server"
-    image     = module.yjs_docker_build.image_uri
+    image     = local.yjs_image_uri
     essential = true
     portMappings = [{
       containerPort = 1234
