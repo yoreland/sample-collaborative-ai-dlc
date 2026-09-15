@@ -41,7 +41,9 @@ output "task_role_arn" {
 
 output "yjs_image_uri" {
   description = "Full image URI with tag for the deployed yjs-server image"
-  value       = module.yjs_docker_build.image_uri
+  # DEPLOY NOTE (env-specific, dev): docker-build module disabled (pre-built image
+  # pushed out-of-band). Reference the ECR image URI directly.
+  value = "${aws_ecr_repository.yjs_server.repository_url}:${local.yjs_image_tag}"
 }
 
 output "yjs_image_tag" {

@@ -153,27 +153,34 @@ resource "aws_ecr_lifecycle_policy" "agentcore" {
   })
 }
 
-module "agentcore_docker_build" {
-  source  = "terraform-aws-modules/lambda/aws//modules/docker-build"
-  version = "~> 8.0"
-
-  create_ecr_repo = false
-  ecr_repo        = aws_ecr_repository.agentcore.name
-  ecr_address     = format("%v.dkr.ecr.%v.%v", data.aws_caller_identity.current.account_id, data.aws_region.current.region, local.dns_suffix)
-
-  use_image_tag    = true
-  image_tag        = local.agentcore_image_tag
-  source_path      = local.agentcore_source_path
-  docker_file_path = "${local.agentcore_source_path}/agentcore/Dockerfile"
-  # AgentCore Runtime runs arm64 only.
-  platform   = "linux/arm64"
-  builder    = "default"
-  build_args = var.docker_build_args
-
-  triggers = {
-    dir_sha = local.agentcore_files_sha
-  }
-}
+# DEPLOY NOTE (env-specific, dev): the AgentCore image is arm64-only and cannot
+# be built in this sandbox — under QEMU-user aarch64 emulation the Dockerfile's
+# `apt-get install gnupg` step deadlocks when gnupg's post-install configuration
+# starts gpg-agent/dirmngr (verified across podman-native and buildkit paths).
+# The docker-build module and the runtime resource below are disabled so the
+# rest of the stack (v2_executions table, IAM, SSM settings, subnets, and every
+# other module) converges. Rebuild the image on a real arm64 host and restore
+# both blocks (+ the image_uri/runtime_arn outputs) to enable AI stage execution.
+# module "agentcore_docker_build" {
+#   source  = "terraform-aws-modules/lambda/aws//modules/docker-build"
+#   version = "~> 8.0"
+#
+#   create_ecr_repo = false
+#   ecr_repo        = aws_ecr_repository.agentcore.name
+#   ecr_address     = format("%v.dkr.ecr.%v.%v", data.aws_caller_identity.current.account_id, data.aws_region.current.region, local.dns_suffix)
+#
+#   use_image_tag    = true
+#   image_tag        = local.agentcore_image_tag
+#   source_path      = local.agentcore_source_path
+#   docker_file_path = "${local.agentcore_source_path}/agentcore/Dockerfile"
+#   platform         = "linux/arm64"
+#   builder          = "default"
+#   build_args       = var.docker_build_args
+#
+#   triggers = {
+#     dir_sha = local.agentcore_files_sha
+#   }
+# }
 
 # ---------------------------------------------------------------------------
 # v2 process/state table (EXEC#/STAGE#/EVENT#/HUMAN#/METRIC#/OUTPUT#)
@@ -612,6 +619,10 @@ resource "aws_security_group" "agentcore" {
 # The AgentCore Runtime (awscc → AWS::BedrockAgentCore::Runtime)
 # ---------------------------------------------------------------------------
 
+# DEPLOY NOTE (env-specific, dev): disabled together with agentcore_docker_build
+# above — the runtime needs the arm64 image, which cannot be built in this
+# sandbox. Restore this resource once the image exists in ECR.
+/*
 resource "awscc_bedrockagentcore_runtime" "stage_executor" {
   agent_runtime_name = replace("${var.project_name}_agentcore_${var.environment}", "-", "_")
   role_arn           = aws_iam_role.agentcore.arn
@@ -677,3 +688,4 @@ resource "awscc_bedrockagentcore_runtime" "stage_executor" {
 
   tags = var.tags
 }
+*/

@@ -516,7 +516,14 @@ module "yjs_server" {
   # Serialize the yjs image build after the agentcore image build — concurrent
   # builds from the two docker provider instances deadlock at context
   # transfer. Value-neutral: only creates a dependency edge (see variable).
-  build_after = module.agentcore.image_uri
+  # DEPLOY NOTE (env-specific, dev): the AgentCore arm64 image cannot be built
+  # in this sandbox (gnupg/gpg-agent deadlocks under QEMU-user aarch64
+  # emulation), so the dependency on module.agentcore.image_uri is temporarily
+  # removed to let the yjs collaboration service and the rest of the stack
+  # converge. build_after is value-neutral (substr(...,0,0) == ""), so this only
+  # drops a graph edge; it changes no resource values. Restore to
+  # `module.agentcore.image_uri` once the AgentCore image is built on real arm64.
+  build_after = ""
 }
 
 # Bedrock AgentCore Runtime — v2 stage execution image + state table.
