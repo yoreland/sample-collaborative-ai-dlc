@@ -1,7 +1,14 @@
 {
   "task_id": "task-bmad-parallel-workflow",
   "task_description": "Add a fork-local `bmad` workflow that sits parallel to the SYSTEM `aidlc-v2` workflow in the yoreland/sample-collaborative-ai-dlc fork. The platform imports its methodology as data (9 block types composed into workflows); this task authors the BMAD 6.10.0 workshop flow (Phases 0-6) as SYSTEM building blocks (Stage/Agent/Scope/Rule/Skill/Template) namespaced bmad-*, plus a `bmad` workflow, and wires them into the seed-blocks Lambda so a fresh deploy exposes `bmad` alongside `aidlc-v2` (read-only SYSTEM, listed via the same GSI1). Brownfield vs greenfield are modeled as Scopes (per-stage scope membership). The batch/loop runner (run_loop.py / KiroCrew) is explicitly OUT OF SCOPE. Upstream aidlc-v2 SYSTEM blocks are NOT modified. Work happens on a new branch feat/bmad-workflow off main; the prior fix/yjs-prebuilt-image commits are preserved.",
-  "status": "in_progress",
+  "status": "completed",
   "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
-  "blocked_reason": null
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "npm run build -w seed-blocks green (bundle 277KB, bmad markdown inlined). vitest seed-blocks 22/22 (15 original + 7 new bmad), workflows 30/30, building-blocks 30/30, run via a temporary globalSetup-free config (testcontainers/docker unavailable in sandbox; suites mock AWS via aws-sdk-client-mock). oxfmt clean, oxlint 0 errors (14 pre-existing warnings = baseline). Docker build skipped: no Dockerfile-based lambda build path here + terraform not installed; validation is data/unit-level per the environment constraints. Test quality: the new tests assert real seeded DynamoDB/S3 rows, run every bmad block through validateBlockInput/validateId, check id-collision disjointness with aidlc-*, verify the artifact DAG has no orphaned consumes, and assert brownfield/greenfield-only per-scope EXECUTE membership derived from the authored data; they would fail if the seeding/data were reverted."
+  }
 }
