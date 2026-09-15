@@ -1,0 +1,7 @@
+{
+  "task_id": "task-bmad-parallel-workflow",
+  "task_description": "Add a fork-local `bmad` workflow that sits parallel to the SYSTEM `aidlc-v2` workflow in the yoreland/sample-collaborative-ai-dlc fork. The platform imports its methodology as data (9 block types composed into workflows); this task authors the BMAD 6.10.0 workshop flow (Phases 0-6) as SYSTEM building blocks (Stage/Agent/Scope/Rule/Skill/Template) namespaced bmad-*, plus a `bmad` workflow, and wires them into the seed-blocks Lambda so a fresh deploy exposes `bmad` alongside `aidlc-v2` (read-only SYSTEM, listed via the same GSI1). Brownfield vs greenfield are modeled as Scopes (per-stage scope membership). The batch/loop runner (run_loop.py / KiroCrew) is explicitly OUT OF SCOPE. Upstream aidlc-v2 SYSTEM blocks are NOT modified. Work happens on a new branch feat/bmad-workflow off main; the prior fix/yjs-prebuilt-image commits are preserved.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null
+}
