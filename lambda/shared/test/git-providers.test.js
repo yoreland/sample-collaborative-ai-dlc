@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   getProvider,
   buildCloneUrl,
@@ -73,6 +73,86 @@ describe('clone URL + host plumbing', () => {
   it('omits auth when no token is supplied', () => {
     expect(buildCloneUrl('github', 'o/r', '')).toBe('https://github.com/o/r.git');
     expect(buildCloneUrl('gitlab', 'g/p', '')).toBe('https://gitlab.com/g/p.git');
+  });
+});
+
+describe('GitLab self-hosted base URL (GITLAB_BASE_URL)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('gitHost and buildCloneUrl resolve the self-hosted host from GITLAB_BASE_URL', () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    expect(gitHost('gitlab')).toBe('git.yoreland.online');
+    expect(buildCloneUrl('gitlab', 'group/project', 'TKN')).toBe(
+      'https://oauth2:TKN@git.yoreland.online/group/project.git',
+    );
+    // github is unaffected by the GitLab base URL.
+    expect(gitHost('github')).toBe('github.com');
+  });
+
+  it("the provider's apiBase reflects GITLAB_BASE_URL at access time", () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    const gl = getProvider('gitlab');
+    expect(gl.apiBase).toBe('https://git.yoreland.online/api/v4');
+    expect(gl.gitHost).toBe('git.yoreland.online');
+  });
+
+  it('a trailing slash on GITLAB_BASE_URL does not double-slash the API base', () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online/');
+    expect(getProvider('gitlab').apiBase).toBe('https://git.yoreland.online/api/v4');
+  });
+
+  it('a self-hosted API call targets the self-hosted host', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    const gl = getProvider('gitlab');
+    const fetchImpl = makeFetch([['/repository/branches', { json: [{ name: 'main' }] }]]);
+    const branches = await gl.listBranches({ token: 't', fetchImpl }, 'g/p');
+    expect(branches).toEqual(['main']);
+    expect(fetchImpl.calls[0].url.startsWith('https://git.yoreland.online/api/v4')).toBe(true);
+  });
+
+  it('exchangeCode POSTs to the self-hosted token endpoint', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', 'https://git.yoreland.online');
+    const calls = [];
+    const fetchImpl = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve({ json: () => Promise.resolve({ access_token: 'AT' }) });
+    };
+    const exchanged = await getProvider('gitlab').oauth.exchangeCode({
+      clientId: 'cid',
+      clientSecret: 'secret',
+      code: 'abc',
+      redirectUri: 'https://app/gitlab/callback',
+      fetchImpl,
+    });
+    expect(calls[0].url).toBe('https://git.yoreland.online/oauth/token');
+    expect(calls[0].url).not.toContain('gitlab.com');
+    expect(exchanged.accessToken).toBe('AT');
+  });
+
+  it('exchangeCode POSTs to gitlab.com when GITLAB_BASE_URL is unset', async () => {
+    vi.stubEnv('GITLAB_BASE_URL', '');
+    const calls = [];
+    const fetchImpl = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve({ json: () => Promise.resolve({ access_token: 'AT' }) });
+    };
+    await getProvider('gitlab').oauth.exchangeCode({
+      clientId: 'cid',
+      clientSecret: 'secret',
+      code: 'abc',
+      redirectUri: 'https://app/gitlab/callback',
+      fetchImpl,
+    });
+    expect(calls[0].url).toBe('https://gitlab.com/oauth/token');
+  });
+
+  it('defaults to gitlab.com when GITLAB_BASE_URL is unset', () => {
+    vi.stubEnv('GITLAB_BASE_URL', '');
+    expect(gitHost('gitlab')).toBe('gitlab.com');
+    expect(getProvider('gitlab').apiBase).toBe('https://gitlab.com/api/v4');
+    expect(buildCloneUrl('gitlab', 'g/p', 'TKN')).toBe('https://oauth2:TKN@gitlab.com/g/p.git');
   });
 });
 

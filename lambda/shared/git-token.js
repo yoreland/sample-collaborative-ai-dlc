@@ -66,7 +66,12 @@ const refreshGitlabToken = async ({ ssm, secrets, ddb, item, tokens }) => {
   // GitLab requires redirect_uri on the refresh_token grant, matching the one
   // used at authorization time — without it GitLab returns `invalid_grant`.
   const redirectUri = process.env.GITLAB_REDIRECT_URI;
-  const res = await fetch('https://gitlab.com/oauth/token', {
+  // Resolve the GitLab base host at call time (default gitlab.com when unset),
+  // matching this file's other self-contained env reads (GITLAB_REDIRECT_URI
+  // above). A trailing slash is stripped so `${base}/oauth/token` never
+  // double-slashes.
+  const gitlabBase = (process.env.GITLAB_BASE_URL || 'https://gitlab.com').replace(/\/+$/, '');
+  const res = await fetch(`${gitlabBase}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
